@@ -1,0 +1,146 @@
+<!doctype html><meta charset="utf-8"><title>URDF Viewer · 导入修正版</title><style>
+body{margin:0;background:#101820;color:#eee;font:14px sans-serif;display:flex;height:100vh}#v{flex:1;position:relative}#p{width:390px;overflow:auto;padding:16px;background:#18232e}h1{font-size:20px}h2{color:#8fd3ff;font-size:16px;margin-top:20px}.lab{color:#ffd166;background:#111c;padding:3px;border:1px solid #ffd166;border-radius:4px;font-size:12px;white-space:nowrap}.j{border-top:1px solid #345;padding:8px 0}.j b{color:#ffd166}.j small{display:block;color:#abc;margin:3px 0}input{width:100%}table{font-size:11px;border-collapse:collapse}#v.dragging{outline:3px dashed #70c8ff;outline-offset:-8px}#importBox input{margin:2px 0 6px}td,th{padding:5px;border-bottom:1px solid #345;white-space:nowrap}
+
+#v{min-width:0}#p{flex:0 0 390px;box-sizing:border-box;width:390px;padding:12px;overflow-y:auto;scroll-behavior:smooth}
+.panel{border:1px solid #40566b;border-radius:9px;background:#14212c;margin-bottom:12px;overflow:hidden}
+.panel h2{margin:0;padding:11px 12px;background:#203143;border-bottom:1px solid #40566b}
+.panel h3{font-size:12px;margin:0 12px 6px;color:#8fd3ff}
+.panel-scroll{overflow:auto;overscroll-behavior:contain;padding:10px;box-sizing:border-box}
+#partsContent{height:340px}#c{height:310px}#connectionsPanel .panel-scroll{height:220px}
+#importBox{padding:10px 12px}#importBox label{display:block;font-size:12px}#importBox input{width:100%}.hint{color:#9ab;font-size:12px;margin:4px 0}
+#s{padding:0 12px;font-size:12px}#progress{display:block;width:calc(100% - 24px);margin:8px 12px 12px;accent-color:#70c8ff}
+#detail{font-size:12px;line-height:1.6;color:#bcd;overflow-wrap:anywhere}
+#componentList{margin-top:8px}#c .j{padding:9px 6px;border-radius:5px;scroll-margin:8px}#c .j.focused{background:#30465b;box-shadow:inset 3px 0 #ffd166}
+.joint-label{display:inline-flex;align-items:center;gap:3.75px;padding:2.25px;border-radius:3px}.joint-name{font-size:9px;font-weight:normal}
+.joint-connection{display:inline-grid;grid-template-columns:auto auto;grid-template-rows:auto auto;align-items:center;column-gap:1.5px;line-height:1.2}
+.joint-connection sup,.joint-connection sub{font-size:4.5px;position:static;vertical-align:baseline;line-height:1.2}
+.joint-connection sup{grid-column:1;grid-row:1}.joint-connection sub{grid-column:1;grid-row:2}.connection-arrow{grid-column:2;grid-row:1 / 3;font-size:9px}
+</style><div id="v"><h1 style="position:absolute;z-index:2;left:15px">URDF Viewer：STL 三维 + URDF joint 标注 <small style="font-size:11px;color:#8fd3ff">导入修正版 20261119</small></h1><div id="dropHint" style="position:absolute;z-index:2;right:18px;top:16px;color:#9deaff;border:1px dashed #6b8aa3;padding:8px;border-radius:6px;background:#18232eaa">将 URDF 或模型文件夹拖到这里</div><div id="load" style="position:absolute;top:50%;left:45%">加载 STL…</div></div><aside id="p">
+<section class="panel" id="importPanel"><h2>导入模型</h2><div id="importBox"><label>选择 URDF：<input id="urdfFile" type="file" accept=".urdf,.xml"></label><label>选择模型文件夹：<input id="folderFiles" type="file" webkitdirectory multiple></label><p class="hint">也可将 URDF 或模型文件夹拖入三维区域。</p><label for="rotationOrder">旋转顺序</label><select id="rotationOrder" style="width:100%;padding:6px;background:#203143;color:#eee;border:1px solid #6b8aa3;border-radius:4px"><option value="ZYX" selected>ZYX · URDF 标准</option><option value="XYZ">XYZ · 三维传统</option></select><p class="hint" id="rotationOrderHint">按 URDF 标准解析 rpy。</p></div><h3>加载状态</h3><div id="s">正在读取组件清单…</div><progress id="progress" value="0" max="1"></progress></section>
+<section class="panel" id="partsPanel"><h2>部件列表</h2><div id="partsContent" class="panel-scroll"><div id="detail">点击三维模型或下方组件列表查看详情</div></div></section>
+<section class="panel" id="jointsPanel"><h2>关节列表</h2><div id="c" class="panel-scroll"></div></section>
+<section class="panel" id="connectionsPanel"><h2>连接明细</h2><div class="panel-scroll"><table><tbody id="t"></tbody></table></div></section>
+</aside>
+<script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}</script><script type="module">
+import*as T from'three';import{OrbitControls}from'three/addons/controls/OrbitControls.js';import{STLLoader}from'three/addons/loaders/STLLoader.js';import{CSS2DRenderer,CSS2DObject}from'three/addons/renderers/CSS2DRenderer.js';
+// Read joint type/axes from the URDF; fixed joints have no rotation glyph.
+const jointResponse=await fetch('models/e05_pro/e05_pro.urdf',{cache:'no-store'});if(!jointResponse.ok)throw Error('URDF '+jointResponse.status);
+const jointDocument=new DOMParser().parseFromString(await jointResponse.text(),'application/xml');
+let rotationSpecs=new Map([...jointDocument.querySelectorAll('robot > joint')].map(j=>{const type=j.getAttribute('type'),name=j.getAttribute('name');const axis=(j.querySelector('axis')?.getAttribute('xyz')||'1 0 0').trim().split(/\s+/).map(Number);return [name,{type,axes:['ball','spherical','floating'].includes(type)?[[1,0,0],[0,1,0],[0,0,1]]:['revolute','continuous','planar'].includes(type)?[axis]:[]}]}));
+let rotationOrder='ZYX';
+const initialModel=parseImportedUrdf(jointDocument);let J=initialModel.joints,L=initialModel.links,B={},Q={},M=[];J.forEach(x=>Q[x[0]]=0);
+let URDF_VISUAL_RPY=Object.fromEntries([...jointDocument.querySelectorAll('robot > link')].map(link=>[link.getAttribute('name'),parseVec(link.querySelector('visual origin')?.getAttribute('rpy'))]));const v=document.querySelector('#v'),load=document.querySelector('#load'),s=document.querySelector('#s'),c=document.querySelector('#c'),t=document.querySelector('#t');if(location.protocol==='file:'){s.innerHTML='<span style="color:#ff9e91">当前是 file:// 打开：浏览器禁止读取本地 STL。请用 http://127.0.0.1:8765/... 打开此页。</span>';}const sc=new T.Scene;sc.background=new T.Color(0x101820);const cam=new T.PerspectiveCamera(45,1,.001,100);cam.up.set(0,0,1);const r=new T.WebGLRenderer({antialias:true});document.querySelector('#v').append(r.domElement);const lr=new CSS2DRenderer;lr.domElement.style.position='absolute';lr.domElement.style.top=0;lr.domElement.style.pointerEvents='none';document.querySelector('#v').append(lr.domElement);const o=new OrbitControls(cam,r.domElement);sc.add(new T.HemisphereLight(0xffffff,0x334455,2));const grid=new T.GridHelper(2,20,0x345,0x223);grid.rotation.x=Math.PI/2;sc.add(grid);const guide=new T.Group();guide.position.set(-.14,-.12,.01);const axisSpec=[[[1,0,0],0xff4444,'X'],[[0,1,0],0x44ff88,'Y'],[[0,0,1],0x5599ff,'Z']];axisSpec.forEach(([a,col,nm])=>{guide.add(new T.ArrowHelper(new T.Vector3(...a),new T.Vector3(),.22,col,.035,.016));guideLabel(nm,new T.Vector3(...a).multiplyScalar(.25), '#'+new T.Color(col).getHexString())});function guideLabel(txt,pos,color){const e=document.createElement('div');e.className='lab';e.style.color=color;e.style.borderColor=color;e.textContent=txt;const o2=new CSS2DObject(e);o2.position.set(...pos);guide.add(o2)}const rmat=new T.LineBasicMaterial({color:0xffd166});function rline(a,b){const g=new T.BufferGeometry().setFromPoints([new T.Vector3(...a),new T.Vector3(...b)]);guide.add(new T.Line(g,rmat))}rline([0,0,0],[.1,0,0]);rline([0,-.012,0],[0,.012,0]);rline([.05,-.008,0],[.05,.008,0]);rline([.1,-.012,0],[.1,.012,0]);guideLabel('0.1 m',[.05,.02,.01],'#ffd166');sc.add(guide);L.forEach(n=>B[n]=new T.Group);sc.add(B.base_link);J.forEach(x=>B[x[1]].add(B[x[2]]));let nload=0,ld=new STLLoader,COMP={},selected=null,hovered=null,hoverKey=null,resourceFiles=null,resourceUrls=new Map,visualMeshes={},visualOrigins={},visualScales={};
+const cache=new Map(),loadedComponents=new Set();let totalComponents=0;
+function progressUpdate(){s.textContent=loadedComponents.size+'/'+totalComponents+' 组件已加载';const bar=document.querySelector('#progress');bar.max=totalComponents||1;bar.value=loadedComponents.size}
+function paint(mesh){if(!mesh)return;const active=mesh===hovered||mesh===selected;mesh.visible=!mesh.userData.component||active;mesh.material.color.set(mesh===selected?0xff9f43:mesh===hovered?0xffd166:0xb5bdc5);mesh.material.emissive.set(active?0x553300:0);if(active)updateBox(mesh);else if(!selected&&!hovered&&boxHelper){boxHelper.visible=false;boxFill.visible=false;}}
+function clearHover(){hoverKey=null;const old=hovered;hovered=null;paint(old);refreshBox()}
+function meshKey(n,meta){return meta?n+'.component_'+meta.index:n}
+function resourceUrl(file){if(resourceFiles){const wanted=String(file||'').replaceAll('\\','/').replace(/^package:\/\//,'').replace(/^\.\//,'');const exact=[wanted,wanted.replace(/^.*\//,'')];for(const [path,url] of resourceUrls){if(exact.includes(path)||path.endsWith('/'+wanted)||path.endsWith('/'+exact[1]))return url}return null}return 'models/e05_pro/meshes/'+file}
+function addMesh(n,file,meta){const key=meshKey(n,meta);if(cache.has(key))return cache.get(key);const promise=new Promise((resolve,reject)=>{const url=resourceUrl(file);if(!url)return reject(Error('未找到网格文件：'+file));ld.load(url,g=>{g.computeVertexNormals();const mat=new T.MeshStandardMaterial({color:0xb5bdc5,roughness:.7,polygonOffset:!!meta,polygonOffsetFactor:-1,polygonOffsetUnits:-1});const mesh=new T.Mesh(g,mat);if(URDF_VISUAL_RPY[n])mesh.rotation.set(...URDF_VISUAL_RPY[n],rotationOrder);if(visualOrigins[n])mesh.position.set(...visualOrigins[n]);if(visualScales[n])mesh.scale.set(...visualScales[n]);mesh.userData={link:n,component:meta,file};B[n].add(mesh);paint(mesh);if(meta||!COMP[n])loadedComponents.add(key);progressUpdate();resolve(mesh)},undefined,e=>reject(e));});cache.set(key,promise);return promise}
+fetch('models/e05_pro/meshes/components.json',{cache:'no-store'}).then(x=>{if(!x.ok)throw Error(x.status);return x.json()}).then(async m=>{COMP=m;totalComponents=L.reduce((sum,n)=>sum+(m[n]?.length||1),0);progressUpdate();buildList();await Promise.all(L.map(n=>addMesh(n,n+'.STL',null)));load.style.display='none';fit();const jobs=L.flatMap(n=>(m[n]||[]).map(z=>()=>addMesh(n,z.file,z)));async function worker(){while(jobs.length){const job=jobs.shift();await job()}}await Promise.all([worker(),worker(),worker()])}).catch(e=>{s.textContent+='；加载失败：'+e.message;load.textContent='加载失败，请查看状态'});
+
+// Components are topologically connected triangle sets, not semantic CAD parts.
+function connectedTriangles(position){
+ const count=position.length/9,parent=Int32Array.from({length:count},(_,i)=>i),owners=new Map();
+ function root(x){while(parent[x]!==x){parent[x]=parent[parent[x]];x=parent[x]}return x}
+ for(let t=0;t<count;t++)for(let v=0;v<3;v++){
+  const k=t*9+v*3,key=[position[k],position[k+1],position[k+2]].map(x=>Math.round(x*1e6)).join(',');
+  const previous=owners.get(key);if(previous===undefined)owners.set(key,t);else parent[root(t)]=root(previous);
+ }
+ const groups=new Map();for(let t=0;t<count;t++){const k=root(t);if(!groups.has(k))groups.set(k,[]);groups.get(k).push(t)}
+ return [...groups.values()].sort((a,b)=>b.length-a.length);
+}
+async function splitImportedMeshes(names){
+ for(const name of names){
+  const mesh=await cache.get(meshKey(name,null)),positions=mesh.geometry.getAttribute('position').array;
+  const groups=connectedTriangles(positions);COMP[name]=[];
+  groups.forEach((triangles,index)=>{
+   const array=new Float32Array(triangles.length*9);triangles.forEach((t,i)=>array.set(positions.subarray(t*9,t*9+9),i*9));
+   const geometry=new T.BufferGeometry();geometry.setAttribute('position',new T.BufferAttribute(array,3));geometry.computeVertexNormals();
+   const meta={index,triangles:triangles.length,file:visualMeshes[name]},part=new T.Mesh(geometry,new T.MeshStandardMaterial({color:0xb5bdc5,roughness:.7,polygonOffset:true,polygonOffsetFactor:-1,polygonOffsetUnits:-1}));
+   part.position.copy(mesh.position);part.quaternion.copy(mesh.quaternion);part.scale.copy(mesh.scale);part.userData={...mesh.userData,component:meta};part.visible=false;
+   B[name].add(part);cache.set(meshKey(name,meta),Promise.resolve(part));COMP[name].push(meta);
+  });
+  await new Promise(resolve=>setTimeout(resolve,0));
+ }
+ loadedComponents.clear();names.forEach(n=>COMP[n].forEach(meta=>loadedComponents.add(meshKey(n,meta))));totalComponents=loadedComponents.size;progressUpdate();buildList();
+}
+function clearSelection(){
+ hoverKey=null;const oldHovered=hovered,oldSelected=selected;hovered=null;selected=null;paint(oldHovered);paint(oldSelected);refreshBox();
+ c.querySelectorAll('.focused').forEach(row=>row.classList.remove('focused'));
+ detail.textContent='点击三维模型或下方组件列表查看详情';
+}
+function parseVec(value,fallback='0 0 0'){return (value||fallback).trim().split(/\s+/).map(Number).slice(0,3)}
+function parseImportedUrdf(doc){
+ const links=[...doc.querySelectorAll('robot > link')].map(x=>x.getAttribute('name')).filter(Boolean);
+ const joints=[...doc.querySelectorAll('robot > joint')].map(j=>{const origin=j.querySelector('origin'),lim=j.querySelector('limit');const type=j.getAttribute('type')||'fixed';return [j.getAttribute('name'),j.querySelector('parent')?.getAttribute('link'),j.querySelector('child')?.getAttribute('link'),parseVec(origin?.getAttribute('xyz')),parseVec(origin?.getAttribute('rpy')),Number(lim?.getAttribute('lower')??-6.2832),Number(lim?.getAttribute('upper')??6.2832)]});
+ rotationSpecs=new Map([...doc.querySelectorAll('robot > joint')].map(j=>{const type=j.getAttribute('type')||'fixed',name=j.getAttribute('name'),axis=parseVec(j.querySelector('axis')?.getAttribute('xyz'),'1 0 0');return [name,{type,axes:['ball','spherical','floating'].includes(type)?[[1,0,0],[0,1,0],[0,0,1]]:['revolute','continuous','planar'].includes(type)?[axis]:[]}]}));return {links,joints}}
+function clearModel(){hoverKey=null;hovered=null;selected=null;refreshBox();Object.values(B).filter(g=>g.parent===sc).forEach(g=>sc.remove(g));Object.values(B).forEach(g=>g.traverse(x=>{x.geometry?.dispose();if(x.material)(Array.isArray(x.material)?x.material:[x.material]).forEach(m=>m.dispose())}));cache.clear();loadedComponents.clear();detail.textContent='悬浮预览，点击查看部件详情';}
+function rebuildHierarchy(root){L.forEach(n=>{const group=B[n];if(group){group.traverse(x=>{if(x.geometry)x.geometry.dispose();if(x.material)(Array.isArray(x.material)?x.material:[x.material]).forEach(m=>m.dispose())});sc.remove(group)}});Object.keys(B).forEach(k=>delete B[k]);L.forEach(n=>B[n]=new T.Group);const rootName=root||L.find(n=>!J.some(x=>x[2]===n))||L[0];if(rootName)sc.add(B[rootName]);J.forEach(x=>{if(B[x[1]]&&B[x[2]])B[x[1]].add(B[x[2]])});Object.keys(Q).forEach(k=>delete Q[k]);J.forEach(x=>Q[x[0]]=0)}
+function buildControls(){c.innerHTML='';J.forEach(x=>{if(rotationSpecs.get(x[0])?.type==='fixed'||x[5]===x[6])return;const d=document.createElement('div');d.className='j';d.dataset.joint=x[0];d.tabIndex=-1;const spec=rotationSpecs.get(x[0]);d.innerHTML='<b>'+x[0]+'</b><small>'+x[1]+' → '+x[2]+'　axis '+(spec?.axes?.[0]||[0,0,1]).join(' ')+'</small><input type=range min='+x[5]+' max='+x[6]+' step=.01 value=0><span> 0.00 rad</span>';const i=d.querySelector('input'),sp=d.querySelector('span');i.oninput=()=>{Q[x[0]]=+i.value;sp.textContent=' '+Q[x[0]].toFixed(2)+' rad';rebuild()};c.append(d)})}
+function buildTable(){t.innerHTML=J.map(x=>'<tr><td>'+x[0]+'</td><td>'+x[1]+' → '+x[2]+'</td><td>'+x[3].join(' ')+'</td><td>'+x[4].join(' ')+'</td></tr>').join('')}
+async function importModel(fileList){const files=[...fileList],urdf=files.find(f=>/\.urdf$/i.test(f.name));if(!urdf)throw Error('没有找到 .urdf 文件');const doc=new DOMParser().parseFromString(await urdf.text(),'application/xml');if(doc.querySelector('parsererror'))throw Error('URDF XML 解析失败');const parsed=parseImportedUrdf(doc);clearModel();resourceFiles=new Map();resourceUrls.forEach(u=>URL.revokeObjectURL(u));resourceUrls.clear();files.forEach(f=>{const path=(f.webkitRelativePath||f.name).replaceAll('\\','/').replace(/^\.\//,'');resourceFiles.set(path,f);resourceUrls.set(path,URL.createObjectURL(f))});J=parsed.joints;L=parsed.links;COMP={};visualMeshes={};visualOrigins={};visualScales={};URDF_VISUAL_RPY={};[...doc.querySelectorAll('robot > link')].forEach(link=>{const n=link.getAttribute('name'),mesh=link.querySelector('visual mesh');if(mesh){visualMeshes[n]=mesh.getAttribute('filename');URDF_VISUAL_RPY[n]=parseVec(link.querySelector('visual origin')?.getAttribute('rpy'));visualOrigins[n]=parseVec(link.querySelector('visual origin')?.getAttribute('xyz'));visualScales[n]=parseVec(mesh.getAttribute('scale'),'1 1 1')}});rebuildHierarchy();totalComponents=L.filter(n=>visualMeshes[n]).length;progressUpdate();buildControls();buildTable();buildList();rebuild();await Promise.all(L.filter(n=>visualMeshes[n]).map(n=>addMesh(n,visualMeshes[n],null)));await splitImportedMeshes(L.filter(n=>visualMeshes[n]));load.style.display='none';fit();s.textContent=loadedComponents.size+'/'+totalComponents+' 组件已加载（导入：'+urdf.name+'）'}
+function handleDrop(event){event.preventDefault();v.classList.remove('dragging');if(event.dataTransfer.files?.length)importModel(event.dataTransfer.files).catch(e=>{s.textContent='导入失败：'+e.message;load.textContent='导入失败'})}
+['dragenter','dragover'].forEach(type=>v.addEventListener(type,e=>{e.preventDefault();v.classList.add('dragging')}));['dragleave','drop'].forEach(type=>v.addEventListener(type,e=>{e.preventDefault();if(type==='dragleave'&&e.target!==v)return;v.classList.remove('dragging')}));v.addEventListener('drop',handleDrop);document.querySelector('#urdfFile').onchange=e=>e.target.files.length&&importModel(e.target.files).catch(err=>s.textContent='导入失败：'+err.message);document.querySelector('#folderFiles').onchange=e=>e.target.files.length&&importModel(e.target.files).catch(err=>s.textContent='导入失败：'+err.message);
+
+// A positive angular displacement follows the right-hand rule about the axis.
+function setRotationOrder(order){
+ if(!['XYZ','ZYX'].includes(order))throw Error('不支持的旋转顺序：'+order);
+ rotationOrder=order;
+ Object.values(B).forEach(group=>group.children.forEach(mesh=>{if(mesh.isMesh&&mesh.userData.link){const rpy=URDF_VISUAL_RPY[mesh.userData.link]||[0,0,0];mesh.rotation.set(...rpy,rotationOrder)}}));
+ rebuild();
+ document.querySelector('#rotationOrderHint').textContent=order==='ZYX'?'按 URDF 标准解析 rpy。':'三维传统：使用 XYZ 旋转顺序解析相同 rpy。';
+}
+document.querySelector('#rotationOrder').onchange=event=>setRotationOrder(event.target.value);
+
+function jointLabel(joint){
+ const e=document.createElement('div');e.className='lab joint-label';
+ const name=document.createElement('span');name.className='joint-name';name.textContent=joint[0];
+ const links=document.createElement('span');links.className='joint-connection';
+ const source=document.createElement('sup');source.textContent=joint[1];
+ const target=document.createElement('sub');target.textContent=joint[2];
+ const arrow=document.createElement('span');arrow.className='connection-arrow';arrow.textContent='↓';arrow.setAttribute('aria-hidden','true');
+ links.append(source,arrow,target);links.setAttribute('aria-label',joint[1]+' → '+joint[2]);e.append(name,links);return e;
+}
+function focusJoint(name){
+ const rows=[...c.querySelectorAll('.j')];const row=rows.find(el=>el.dataset.joint===name);if(!row)return;
+ rows.forEach(el=>el.classList.toggle('focused',el===row));
+ row.scrollIntoView({behavior:'smooth',block:'nearest',inline:'nearest'});row.focus({preventScroll:true});
+}
+function normalAxisColor(axisValues){
+ const raw=Array.isArray(axisValues)?axisValues:[axisValues.x,axisValues.y,axisValues.z];
+ const v=raw.map(x=>Math.abs(Number(x)||0));
+ const k=v.indexOf(Math.max(...v));
+ return [0xff4444,0x44ff88,0x5599ff][k<0?2:k];
+}
+function positiveRotationGlyph(axisValues,radius,color){
+ const axis=new T.Vector3(...axisValues).normalize();if(axis.lengthSq()===0)return new T.Group();
+ const glyph=new T.Group();glyph.quaternion.setFromUnitVectors(new T.Vector3(0,0,1),axis);
+ const start=-Math.PI*.25,end=start+Math.PI*1.65,points=[];
+ for(let k=0;k<=72;k++){const a=start+(end-start)*k/72;points.push(new T.Vector3(radius*Math.cos(a),radius*Math.sin(a),0))}
+ const material=new T.MeshBasicMaterial({color,transparent:true,opacity:.9,depthTest:false});
+ const curve=new T.CatmullRomCurve3(points);const arc=new T.Mesh(new T.TubeGeometry(curve,72,.0024,6,false),material);arc.renderOrder=12;glyph.add(arc);
+ const pick=new T.Mesh(new T.TubeGeometry(curve,72,.009,6,false),new T.MeshBasicMaterial({transparent:true,opacity:0,depthWrite:false}));glyph.add(pick);
+ const tangent=new T.Vector3(-Math.sin(end),Math.cos(end),0),tip=points.at(-1);
+ const head=new T.Mesh(new T.ConeGeometry(.010,.025,12),material);head.position.copy(tip).addScaledVector(tangent,-.0125);head.quaternion.setFromUnitVectors(new T.Vector3(0,1,0),tangent);head.renderOrder=13;glyph.add(head);
+ return glyph;
+}
+function rebuild(){
+ L.slice(1).forEach(n=>{B[n].position.set(0,0,0);B[n].rotation.set(0,0,0)});
+ J.forEach(x=>{const b=B[x[2]];b.position.set(...x[3]);b.rotation.set(...x[4],rotationOrder);const spec=rotationSpecs.get(x[0]);if(spec?.axes.length)b.rotateOnAxis(new T.Vector3(...spec.axes[0]).normalize(),Q[x[0]])});
+ M.forEach(x=>{sc.remove(x);x.traverse(y=>{y.geometry?.dispose();if(y.material){(Array.isArray(y.material)?y.material:[y.material]).forEach(m=>m.dispose())}if(y.isCSS2DObject)y.element.remove()})});M.length=0;
+ J.forEach(x=>{
+  const marker=new T.Group();B[x[2]].getWorldPosition(marker.position);B[x[2]].getWorldQuaternion(marker.quaternion);
+  marker.add(new T.Mesh(new T.SphereGeometry(.009,10,8),new T.MeshBasicMaterial({color:0xffc857})));
+  const spec=rotationSpecs.get(x[0]);
+  if(spec?.axes.length){spec.axes.forEach((axis,i)=>{const localAxis=new T.Vector3(...axis).normalize();const worldAxis=localAxis.clone().applyQuaternion(marker.quaternion).normalize();const color=normalAxisColor(worldAxis);marker.add(new T.ArrowHelper(localAxis,new T.Vector3(),.12,color));const glyph=positiveRotationGlyph(localAxis,.073+i*.014,color);glyph.traverse(part=>{part.userData.joint=x[0]});marker.add(glyph)})}
+  const e=jointLabel(x);const label=new CSS2DObject(e);label.position.set(0,0,-.025);marker.add(label);sc.add(marker);M.push(marker);
+ });refreshBox();
+}
+
+function fit(){let b=new T.Box3;L.forEach(n=>b.expandByObject(B[n]));let c=b.getCenter(new T.Vector3),z=b.getSize(new T.Vector3).length();o.target.copy(c);cam.position.copy(c).add(new T.Vector3(z*1.4,-z*1.6,z));o.update()}let boxHelper=null,boxFill=null;function updateBox(mesh){if(!mesh){if(boxHelper)boxHelper.visible=false;if(boxFill)boxFill.visible=false;return}const box=new T.Box3().setFromObject(mesh);if(!boxHelper){boxHelper=new T.Box3Helper(box,0xffc857);boxHelper.material.transparent=true;boxHelper.material.opacity=.65;sc.add(boxHelper);boxFill=new T.Mesh(new T.BoxGeometry(1,1,1),new T.MeshBasicMaterial({color:0xffc857,transparent:true,opacity:.12,depthWrite:false,side:T.DoubleSide}));sc.add(boxFill)}else boxHelper.box.copy(box);boxHelper.visible=true;boxFill.visible=true;box.getCenter(boxFill.position);box.getSize(boxFill.scale)}function refreshBox(){updateBox(hovered||selected)}function buildList(){document.querySelector('#componentList')?.remove();const box=document.createElement('div');box.id='componentList';box.style.cssText='margin-top:8px';function addEntry(parent,n,z,meta){const button=document.createElement('button');button.textContent=meta?n+'.component_'+String(meta.index).padStart(2,'0'):n;button.style.cssText='display:block;width:100%;text-align:left;background:#243546;color:#bcd;border:1px solid #456;padding:3px;margin:2px 0;font-size:11px';const key=meshKey(n,meta);button.onmouseenter=()=>{clearHover();hoverKey=key;addMesh(n,z.file,meta).then(mesh=>{if(hoverKey===key&&button.isConnected){hovered=mesh;paint(mesh)}})};button.onmouseleave=clearHover;button.onclick=()=>{clearHover();addMesh(n,z.file,meta).then(mesh=>selectMesh(mesh))};parent.append(button)}L.forEach(n=>{const files=COMP[n]||(resourceFiles?(visualMeshes[n]?[{file:visualMeshes[n]}]:[]):[{file:n+'.STL'}]);const group=document.createElement('details');group.open=n==='Link1'||n==='Link3';const summary=document.createElement('summary');summary.textContent=n+(files.length>1?' ('+files.length+' components)':'');summary.style.cssText='cursor:pointer;color:#9deaff;padding:4px 2px;font-size:12px';group.append(summary);const inner=document.createElement('div');inner.style.paddingLeft='8px';files.forEach(z=>addEntry(inner,n,z,COMP[n]?z:null));group.append(inner);box.append(group)});detail.after(box)}
+const ray=new T.Raycaster(),mouse=new T.Vector2();function select(ev){const rect=r.domElement.getBoundingClientRect();mouse.set(((ev.clientX-rect.left)/rect.width)*2-1,-((ev.clientY-rect.top)/rect.height)*2+1);ray.setFromCamera(mouse,cam);const jointHits=ray.intersectObjects(M,true).filter(h=>h.object.userData.joint);if(jointHits.length){focusJoint(jointHits[0].object.userData.joint);return}const hits=ray.intersectObjects(Object.values(B).filter(g=>g.parent===sc),true).filter(h=>h.object.userData.link&&h.object.visible);if(hits.length)selectMesh(hits[0].object);else clearSelection()}
+function selectMesh(mesh){clearHover();const old=selected;selected=mesh;paint(old);paint(mesh);updateBox(mesh);
+const n=mesh.userData.link,comp=mesh.userData.component,incoming=J.find(j=>j[2]===n),outgoing=J.filter(j=>j[1]===n),parent=incoming?.[1]||'world',pj=incoming?.[0]||'—',child=outgoing.map(j=>j[2]).join(', ')||'—',cj=outgoing.map(j=>j[0]).join(', ')||'—',box=new T.Box3().setFromObject(mesh),size=box.getSize(new T.Vector3()),pos=new T.Vector3;mesh.getWorldPosition(pos);detail.innerHTML='<b style="color:#ffd166;font-size:15px">'+n+(comp?'.component_'+String(comp.index).padStart(2,'0'):'')+'</b><br>STL：meshes/'+(comp?comp.index:'')+' '+n+'.STL<br>父 joint：'+pj+'（'+parent+' → '+n+'）<br>子 joint：'+cj+'（'+n+' → '+child+'）<br>世界坐标：('+pos.x.toFixed(4)+', '+pos.y.toFixed(4)+', '+pos.z.toFixed(4)+') m<br>包围盒尺寸：('+size.x.toFixed(4)+', '+size.y.toFixed(4)+', '+size.z.toFixed(4)+') m'}r.domElement.addEventListener('click',select);function rs(){let x=v.getBoundingClientRect();cam.aspect=x.width/x.height;cam.updateProjectionMatrix();r.setSize(x.width,x.height);lr.setSize(x.width,x.height)}addEventListener('resize',rs);rs();rebuild();
+buildControls();buildTable();function loop(){requestAnimationFrame(loop);r.render(sc,cam);lr.render(sc,cam)}loop();
+</script>

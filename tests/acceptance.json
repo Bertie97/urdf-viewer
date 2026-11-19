@@ -1,0 +1,27 @@
+{
+  "background_clear": {
+    "state": "tested",
+    "evidence": "Browser: component click then background restores details; joint3 click then background removes focus"
+  },
+  "label_scale": {
+    "state": "tested",
+    "evidence": "Computed CSS: 9px joint name, 4.5px source/target"
+  },
+  "import_decomposition": {
+    "state": "tested",
+    "command": "node tests/components.cjs; python3 tests/build-browser-check.py; open /tests/import-check.html",
+    "evidence": "Browser PASS: 345 components; Link1 25, Link3 28; no console errors",
+    "limitation": "Connected triangle sets; cannot split physically connected CAD parts; component indices regenerated"
+  },
+  "e05_pose": {
+    "state": "tested",
+    "cause": "Old XYZ renderer differs from URDF Rz Ry Rx; Link3 visual compensation remained -pi/2",
+    "fix": "Restore Link3 visual/collision rpy 0 0 0 from original backup in source and viewer URDF; parse default joint and visual rpy from URDF",
+    "evidence": "Original URDF attributes restored; source and copy identical; closest Link3-Link4 vertex distance 73.919 mm -> 0.012 mm; browser shows connected upright model"
+  },
+  "relations": [
+    "background select -> clearSelection -> paint/refreshBox/focus removal",
+    "importModel -> STL -> splitImportedMeshes -> connectedTriangles -> component list/cache",
+    "URDF origin -> ZYX transforms -> default and imported mesh pose"
+  ]
+}

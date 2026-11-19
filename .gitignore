@@ -1,0 +1,19 @@
+.DS_Store
+__pycache__/
+*.pyc
+
+/tests/import-check.html
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.log
+.cache/
+node_modules/
+# Superseded experimental meshes; retain locally
+models/e05_pro/meshes/*_no_joint*_ring.STL
+models/e05_pro/meshes/components/Link1_component_05.STL
+models/e05_pro/meshes/components/Link3_component_06.STL

@@ -1,0 +1,10 @@
+{
+  "name": "urdf-viewer",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Browser-based URDF and STL inspection viewer",
+  "scripts": {
+    "start": "python3 serve.py",
+    "preview": "python3 serve.py"
+  }
+}
